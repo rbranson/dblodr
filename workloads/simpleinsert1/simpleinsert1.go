@@ -14,13 +14,11 @@ import (
 )
 
 var (
-	loopDelay       time.Duration
-	preCommitDelay  time.Duration
-	loopJitter      float64
-	preCommitJitter float64
-	tableName       string
 	columns         string
 	dataLen         int
+	preCommitDelay  time.Duration
+	preCommitJitter float64
+	tableName       string
 )
 
 func randStringArray(len int, size int) []string {
@@ -42,8 +40,6 @@ var wl = &workload.Workload{
 	Cmd: func(c *cobra.Command) {
 		c.Flags().StringVar(&columns, "columns", "data1,data2", "Comma-separated list of varchar columns to insert into (e.g. 'data1,data2')")
 		c.Flags().IntVar(&dataLen, "data-len", 20, "Length of the random data to insert")
-		c.Flags().DurationVar(&loopDelay, "loop-delay", 0*time.Second, "Delay between each commit")
-		c.Flags().Float64Var(&loopJitter, "loop-jitter", 0.0, "Jitter for the loop delay")
 		c.Flags().DurationVar(&preCommitDelay, "precommit-delay", 0*time.Second, "Delay between the insert and commit")
 		c.Flags().Float64Var(&preCommitJitter, "precommit-jitter", 0.0, "Jitter for the precommit delay")
 		c.Flags().StringVar(&tableName, "table-name", "tbl1", "Table to insert into")
@@ -54,12 +50,6 @@ var wl = &workload.Workload{
 	},
 
 	Run: func(ctx context.Context, inst *gen.Instance, db *sql.DB) (error, bool) {
-		if inst.Invokes.Load() > 0 {
-			if err := gen.InterruptibleSleep(ctx, gen.JitterDuration(loopDelay, preCommitJitter)); err != nil {
-				return err, false
-			}
-		}
-
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			return fmt.Errorf("in begin tx: %w", err), false

@@ -17,6 +17,8 @@ import (
 	"go.uber.org/zap"
 )
 
+var maxTime = time.Unix(1<<63-62135596801, 999999999)
+
 var runCmd = &cobra.Command{
 	Use:   "run",
 	Short: "Execute load against the target database",
@@ -26,10 +28,17 @@ var runCmd = &cobra.Command{
 }
 
 var (
-	concurrency   int
-	iterTimeout   time.Duration
-	statFrequency time.Duration
-	iterations    int64
+	concurrency     int
+	connMaxIdleTime time.Duration
+	connMaxLifetime time.Duration
+	duration        time.Duration
+	iterDelay       time.Duration
+	iterJitter      float64
+	iterTimeout     time.Duration
+	iterations      int64
+	maxConnections  int
+	maxIdleConns    int
+	statFrequency   time.Duration
 )
 
 func addDatabaseFlags(c *cobra.Command) {
@@ -41,15 +50,32 @@ func addDatabaseFlags(c *cobra.Command) {
 
 func init() {
 	addDatabaseFlags(runCmd)
-	runCmd.PersistentFlags().IntVarP(&concurrency, "concurrency", "t", 1, "Concurrency")
+	runCmd.PersistentFlags().IntVarP(&concurrency, "concurrency", "C", 1, "Concurrency")
+	runCmd.PersistentFlags().DurationVar(&connMaxIdleTime, "conn-max-idle-time", 0, "Max idle time for a connection")
+	runCmd.PersistentFlags().DurationVar(&connMaxLifetime, "conn-max-lifetime", 10*time.Second, "Max lifetime for a connection")
+	runCmd.PersistentFlags().DurationVarP(&iterDelay, "delay", "D", 0, "Delay between each iteration")
+	runCmd.PersistentFlags().DurationVarP(&duration, "duration", "T", 0, "Duration to run (0 is unlimited)")
 	runCmd.PersistentFlags().DurationVar(&iterTimeout, "iter-timeout", 0, "Timeout for an individual iteration of the run (0 is no timeout)")
-	runCmd.PersistentFlags().DurationVar(&statFrequency, "stat-frequency", 1*time.Second, "Frequency to print run stats")
 	runCmd.PersistentFlags().Int64VarP(&iterations, "iterations", "n", 0, "Iterations to run (0 is unlimited)")
+	runCmd.PersistentFlags().IntVar(&maxConnections, "max-connections", 0, "Max open connections (0 is unlimited)")
+	runCmd.PersistentFlags().IntVar(&maxIdleConns, "max-idle-connections", 0, "Max idle connections (0 retains no idle connections)")
+	runCmd.PersistentFlags().Float64VarP(&iterJitter, "jitter", "j", 0.0, "Jitter for the iteration delay (0 is no jitter)")
+	runCmd.PersistentFlags().DurationVar(&statFrequency, "stat-frequency", 1*time.Second, "Frequency to print run stats")
 }
 
 func Run(w *workload.Workload) {
 	db := dbFromFlags()
 	defer db.Close()
+
+	db.SetConnMaxIdleTime(connMaxIdleTime)
+	db.SetConnMaxLifetime(connMaxLifetime)
+	db.SetMaxIdleConns(maxIdleConns)
+	db.SetMaxOpenConns(maxConnections)
+
+	stopAfter := time.Time(maxTime)
+	if duration != 0 {
+		stopAfter = time.Now().Add(duration)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -82,6 +108,9 @@ func Run(w *workload.Workload) {
 	gstats.ResetCounter("iterations")
 	gstats.ResetCounter("errors")
 
+	statsCh := make(chan struct{})
+	go emitStats(ctx, logger, gstats, statsCh)
+
 	for i := 0; i < concurrency; i++ {
 		wg.Add(1)
 		stats := &gen.Stats{Parent: gstats}
@@ -95,28 +124,24 @@ func Run(w *workload.Workload) {
 
 		go func() {
 			defer wg.Done()
-			worker(inst, w, &invokes)
+			worker(inst, w, &invokes, stopAfter)
 		}()
 	}
-
-	statsCh := make(chan struct{})
-	go emitStats(ctx, logger, gstats, statsCh)
 
 	wg.Wait()
 	cancel()
 	<-statsCh
 }
 
-func worker(inst *gen.Instance, w *workload.Workload, invokes *atomic.Int64) {
+func worker(inst *gen.Instance, w *workload.Workload, invokes *atomic.Int64, stopAfter time.Time) {
 	for {
-		if inst.Ctx.Err() != nil {
+		if stopAfter.Before(time.Now()) || inst.Ctx.Err() != nil {
 			return
 		}
 		if iterations > 0 && invokes.Add(1) > iterations {
 			return
 		}
-
-		inst.Invokes.Add(1)
+		invocationNum := inst.Invokes.Add(1)
 
 		ctx := inst.Ctx
 		cancel := func() {}
@@ -125,12 +150,20 @@ func worker(inst *gen.Instance, w *workload.Workload, invokes *atomic.Int64) {
 		}
 		defer cancel()
 
-		start := time.Now()
-		err, isFatal := w.Run(ctx, inst, inst.DB)
-		dur := time.Since(start)
+		var err error
+		if invocationNum > 0 {
+			err = gen.InterruptibleSleep(ctx, gen.JitterDuration(iterDelay, iterJitter))
+		}
 
-		inst.Stats.CounterIncr("iterations", 1)
-		inst.Stats.CounterIncrDur("runtime_ns", dur, time.Nanosecond)
+		var isFatal bool
+		if err == nil {
+			start := time.Now()
+			err, isFatal = w.Run(ctx, inst, inst.DB)
+			dur := time.Since(start)
+
+			inst.Stats.CounterIncr("iterations", 1)
+			inst.Stats.CounterIncrDur("runtime_ns", dur, time.Nanosecond)
+		}
 
 		if err != nil {
 			if isFatal {
