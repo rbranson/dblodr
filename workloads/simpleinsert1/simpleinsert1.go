@@ -71,14 +71,6 @@ var wl = &workload.Workload{
 			q := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", tableName, columnList, strings.Repeat("?,", len(cols)-1)+"?")
 			_, err = tx.ExecContext(ctx, q, args...)
 			if err != nil {
-				if insertsPerTx > 1 && strings.Contains(err.Error(), "transaction rolled back to reverse changes") {
-					_ = tx.Rollback()
-					tx, err = db.BeginTx(ctx, nil)
-					if err != nil {
-						return fmt.Errorf("new begin tx after vtgate rolled back the previous one: %w", err), false
-					}
-					continue
-				}
 				return fmt.Errorf("in exec for query: %q, error: %w", q, err), false
 			}
 		}
