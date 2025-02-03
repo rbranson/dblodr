@@ -19,6 +19,7 @@ var (
 	preCommitDelay  time.Duration
 	preCommitJitter float64
 	tableName       string
+	insertsPerTx    int
 )
 
 func randStringArray(len int, size int) []string {
@@ -43,6 +44,7 @@ var wl = &workload.Workload{
 		c.Flags().DurationVar(&preCommitDelay, "precommit-delay", 0*time.Second, "Delay between the insert and commit")
 		c.Flags().Float64Var(&preCommitJitter, "precommit-jitter", 0.0, "Jitter for the precommit delay")
 		c.Flags().StringVar(&tableName, "table-name", "tbl1", "Table to insert into")
+		c.Flags().IntVar(&insertsPerTx, "inserts-per-tx", 1, "Number of inserts per tx")
 	},
 
 	Init: func(ctx context.Context, db *sql.DB) error {
@@ -58,16 +60,27 @@ var wl = &workload.Workload{
 
 		cols := parseColumns(columns)
 		columnList := strings.Join(cols, ",")
-		data := randStringArray(len(cols), dataLen)
-		args := make([]any, len(data))
-		for i, v := range data {
-			args[i] = v
-		}
 
-		q := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", tableName, columnList, strings.Repeat("?,", len(cols)-1)+"?")
-		_, err = tx.ExecContext(ctx, q, args...)
-		if err != nil {
-			return fmt.Errorf("in exec for query: %q, error: %w", q, err), false
+		for i := 0; i < insertsPerTx; i++ {
+			data := randStringArray(len(cols), dataLen)
+			args := make([]any, len(data))
+			for i, v := range data {
+				args[i] = v
+			}
+
+			q := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", tableName, columnList, strings.Repeat("?,", len(cols)-1)+"?")
+			_, err = tx.ExecContext(ctx, q, args...)
+			if err != nil {
+				if insertsPerTx > 1 && strings.Contains(err.Error(), "transaction rolled back to reverse changes") {
+					_ = tx.Rollback()
+					tx, err = db.BeginTx(ctx, nil)
+					if err != nil {
+						return fmt.Errorf("new begin tx after vtgate rolled back the previous one: %w", err), false
+					}
+					continue
+				}
+				return fmt.Errorf("in exec for query: %q, error: %w", q, err), false
+			}
 		}
 
 		if err := gen.InterruptibleSleep(ctx, gen.JitterDuration(preCommitDelay, preCommitJitter)); err != nil {
