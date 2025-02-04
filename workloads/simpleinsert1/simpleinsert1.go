@@ -22,18 +22,6 @@ var (
 	insertsPerTx    int
 )
 
-func randStringArray(len int, size int) []string {
-	strs := make([]string, len)
-	for i := 0; i < len; i++ {
-		strs[i] = gen.RandAlphanum(size)
-	}
-	return strs
-}
-
-func parseColumns(s string) []string {
-	return strings.Split(s, ",")
-}
-
 var wl = &workload.Workload{
 	Use:  "simpleinsert1",
 	Desc: "Insert into a simple table",
@@ -90,4 +78,16 @@ var wl = &workload.Workload{
 
 func init() {
 	workloads.Register(wl)
+}
+
+func randStringArray(len int, size int) []string {
+	strs := make([]string, len)
+	for i := 0; i < len; i++ {
+		strs[i] = gen.RandAlphanum(size)
+	}
+	return strs
+}
+
+func parseColumns(s string) []string {
+	return strings.Split(s, ",")
 }

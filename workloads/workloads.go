@@ -35,7 +35,9 @@ func Register(w *workload.Workload) {
 			}
 		},
 	}
-	w.Cmd(c)
+	if w.Cmd != nil {
+		w.Cmd(c)
+	}
 
 	cmd.AddWorkloadCommand(c)
 }
