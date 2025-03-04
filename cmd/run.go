@@ -58,7 +58,7 @@ func init() {
 	runCmd.PersistentFlags().DurationVar(&iterTimeout, "iter-timeout", 0, "Timeout for an individual iteration of the run (0 is no timeout)")
 	runCmd.PersistentFlags().Int64VarP(&iterations, "iterations", "n", 0, "Iterations to run (0 is unlimited)")
 	runCmd.PersistentFlags().IntVar(&maxConnections, "max-connections", 0, "Max open connections (0 is unlimited)")
-	runCmd.PersistentFlags().IntVar(&maxIdleConns, "max-idle-connections", 0, "Max idle connections (0 retains no idle connections)")
+	runCmd.PersistentFlags().IntVar(&maxIdleConns, "max-idle-connections", 10, "Max idle connections (0 retains no idle connections)")
 	runCmd.PersistentFlags().Float64VarP(&iterJitter, "jitter", "j", 0.0, "Jitter for the iteration delay (0 is no jitter)")
 	runCmd.PersistentFlags().DurationVar(&statFrequency, "stat-frequency", 1*time.Second, "Frequency to print run stats")
 }
