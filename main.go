@@ -6,6 +6,7 @@ import (
 
 	"github.com/rbranson/dblodr/cmd"
 
+	_ "github.com/rbranson/dblodr/workloads/exec"
 	_ "github.com/rbranson/dblodr/workloads/openconns"
 	_ "github.com/rbranson/dblodr/workloads/simpleinsert1"
 
