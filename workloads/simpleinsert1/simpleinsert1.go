@@ -35,10 +35,6 @@ var wl = &workload.Workload{
 		c.Flags().IntVar(&insertsPerTx, "inserts-per-tx", 1, "Number of inserts per tx")
 	},
 
-	Init: func(ctx context.Context, db *sql.DB) error {
-		return nil
-	},
-
 	Run: func(ctx context.Context, inst *gen.Instance, db *sql.DB) (error, bool) {
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
